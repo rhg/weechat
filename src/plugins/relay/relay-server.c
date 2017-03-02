@@ -58,6 +58,7 @@ struct t_relay_server *last_relay_server = NULL;
  *   ipv4.ipv6.irc.freenode    1    1    0   irc      freenode
  *   ipv6.ssl.irc.freenode     0    1    1   irc      freenode
  *   weechat                   1    1    0   weechat
+ *   unix.weechat              0    0    0   weechat
  *   ssl.weechat               1    1    1   weechat
  *   ipv6.ssl.weechat          0    1    1   weechat
  *
@@ -69,11 +70,13 @@ relay_server_get_protocol_args (const char *protocol_and_args,
                                 int *ipv4, int *ipv6, int *ssl,
                                 char **protocol, char **protocol_args)
 {
-    int opt_ipv4, opt_ipv6, opt_ssl;
+    int opt_ipv4, opt_ipv6, opt_ssl, opt_unix;
     char *pos;
 
     opt_ipv4 = -1;
     opt_ipv6 = -1;
+    // this has to be enabled explicitly
+    opt_unix = 0;
     opt_ssl = 0;
     while (1)
     {
@@ -91,6 +94,13 @@ relay_server_get_protocol_args (const char *protocol_and_args,
         {
             opt_ssl = 1;
             protocol_and_args += 4;
+        }
+        else if (strncmp (protocol_and_args, "unix.", 5) == 0)
+        {
+	    // disable ip
+	    opt_ipv4 = 0;
+	    opt_ipv6 = 0;
+            protocol_and_args += 5;
         }
         else
             break;
@@ -112,11 +122,7 @@ relay_server_get_protocol_args (const char *protocol_and_args,
         if (opt_ipv6 == -1)
             opt_ipv6 = 0;
     }
-    if (!opt_ipv4 && !opt_ipv6)
-    {
-        /* both IPv4/IPv6 disabled (should never occur!) */
-        opt_ipv4 = 1;
-    }
+    // both ipv4 and 6 disabled means use unix domain sockets
     if (ipv4)
         *ipv4 = opt_ipv4;
     if (ipv6)
@@ -384,10 +390,14 @@ relay_server_create_socket (struct t_relay_server *server)
     int domain, set, max_clients, addr_size;
     struct sockaddr_in server_addr;
     struct sockaddr_in6 server_addr6;
+	struct sockaddr_un server_addru;
     const char *bind_address;
     void *ptr_addr;
 
+    // TODO: useless on unix sockets
     bind_address = weechat_config_string (relay_config_network_bind_address);
+	// TODO: useless on ip sockets
+    bind_path = weechat_config_string (relay_config_network_bind_path);
 
     if (server->ipv6)
     {
@@ -411,7 +421,7 @@ relay_server_create_socket (struct t_relay_server *server)
         ptr_addr = &server_addr6;
         addr_size = sizeof (struct sockaddr_in6);
     }
-    else
+    else if (server->ipv4)
     {
         domain = AF_INET;
         memset (&server_addr, 0, sizeof (struct sockaddr_in));
@@ -433,6 +443,33 @@ relay_server_create_socket (struct t_relay_server *server)
         ptr_addr = &server_addr;
         addr_size = sizeof (struct sockaddr_in);
     }
+    else
+	{
+        domain = AF_UNIX;
+        memset (&server_addru, 0, sizeof (struct sockaddr_un));
+        server_addr.sun_family = domain;
+        if (bind_path && bind_path[0])
+        {
+			// TODO: check if this is a valid path, if we can
+			int l = sizeof (server_addru.sun_path) - 1;
+			strncpy (server_addru.sun_path, bind_path, sizeof (server_addru.sun_path) - 1);
+			// Must be null terminated to unlink it
+			server_addru.sun_path[l] = '\0';
+        }
+		else
+		{
+			weechat_printf (NULL,
+							_("%s%s: invalid bind path \"%s\""),
+							weechat_prefix ("error"), RELAY_PLUGIN_NAME,
+							bind_path);
+			return 0;
+		}
+		// TODO: part of me feels disgusted at removing arbitrary paths
+		unlink (server_addru.sun_path);
+
+        ptr_addr = &server_addru;
+        addr_size = sizeof (struct sockaddr_un);
+	}
 
     /* create socket */
     server->sock = socket (domain, SOCK_STREAM, 0);

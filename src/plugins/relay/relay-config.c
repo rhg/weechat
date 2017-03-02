@@ -55,6 +55,7 @@ struct t_config_option *relay_config_color_text_selected;
 struct t_config_option *relay_config_network_allow_empty_password;
 struct t_config_option *relay_config_network_allowed_ips;
 struct t_config_option *relay_config_network_bind_address;
+struct t_config_option *relay_config_network_bind_path;
 struct t_config_option *relay_config_network_clients_purge_delay;
 struct t_config_option *relay_config_network_compression_level;
 struct t_config_option *relay_config_network_ipv6;
@@ -776,6 +777,12 @@ relay_config_init ()
            "interfaces, use \"127.0.0.1\" to allow connections from "
             "local machine only)"),
         NULL, 0, 0, "", NULL, 0,
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    relay_config_network_bind_path = weechat_config_new_option (
+        relay_config_file, ptr_section,
+        "bind_path", "string",
+        N_("path to listen on for unix domain sockets"),
+        NULL, 0, 0, "%h/relay", NULL, 0,
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
     relay_config_network_clients_purge_delay = weechat_config_new_option (
         relay_config_file, ptr_section,
