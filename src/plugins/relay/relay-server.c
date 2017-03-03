@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -70,13 +71,11 @@ relay_server_get_protocol_args (const char *protocol_and_args,
                                 int *ipv4, int *ipv6, int *ssl,
                                 char **protocol, char **protocol_args)
 {
-    int opt_ipv4, opt_ipv6, opt_ssl, opt_unix;
+    int opt_ipv4, opt_ipv6, opt_ssl ;
     char *pos;
 
     opt_ipv4 = -1;
     opt_ipv6 = -1;
-    // this has to be enabled explicitly
-    opt_unix = 0;
     opt_ssl = 0;
     while (1)
     {
@@ -272,7 +271,7 @@ relay_server_sock_cb (const void *pointer, void *data, int fd)
     relay_password = weechat_string_eval_expression (
         weechat_config_string (relay_config_network_password),
         NULL, NULL, NULL);
-    if (!weechat_config_boolean (relay_config_network_allow_empty_password)
+    if ((server->ipv4 || server->ipv6) && !weechat_config_boolean (relay_config_network_allow_empty_password)
         && (!relay_password || !relay_password[0]))
     {
         weechat_printf (NULL,
@@ -390,14 +389,12 @@ relay_server_create_socket (struct t_relay_server *server)
     int domain, set, max_clients, addr_size;
     struct sockaddr_in server_addr;
     struct sockaddr_in6 server_addr6;
-	struct sockaddr_un server_addru;
-    const char *bind_address;
+    struct sockaddr_un server_addru;
+    const char *bind_address, *bind_path;
     void *ptr_addr;
 
     // TODO: useless on unix sockets
     bind_address = weechat_config_string (relay_config_network_bind_address);
-	// TODO: useless on ip sockets
-    bind_path = weechat_config_string (relay_config_network_bind_path);
 
     if (server->ipv6)
     {
@@ -447,25 +444,34 @@ relay_server_create_socket (struct t_relay_server *server)
 	{
         domain = AF_UNIX;
         memset (&server_addru, 0, sizeof (struct sockaddr_un));
-        server_addr.sun_family = domain;
+        server_addru.sun_family = domain;
+	bind_path = weechat_string_expand_home (weechat_config_string (relay_config_network_bind_path));
         if (bind_path && bind_path[0])
         {
-			// TODO: check if this is a valid path, if we can
-			int l = sizeof (server_addru.sun_path) - 1;
-			strncpy (server_addru.sun_path, bind_path, sizeof (server_addru.sun_path) - 1);
-			// Must be null terminated to unlink it
-			server_addru.sun_path[l] = '\0';
+		char* tmp = weechat_string_replace (bind_path, "%h",
+						    weechat_info_get ("weechat_dir",
+								      NULL));
+		// TODO: check if this is a valid path, if we can
+		int l = sizeof (server_addru.sun_path) - 1;
+		strncpy (server_addru.sun_path, tmp, sizeof (server_addru.sun_path) - 1);
+		free (tmp);
+		free (bind_path);
+		// Must be null terminated to unlink it
+		server_addru.sun_path[l] = '\0';
+
+		weechat_printf (NULL,
+		    "%s", server_addru.sun_path);
         }
-		else
-		{
-			weechat_printf (NULL,
-							_("%s%s: invalid bind path \"%s\""),
-							weechat_prefix ("error"), RELAY_PLUGIN_NAME,
-							bind_path);
-			return 0;
-		}
-		// TODO: part of me feels disgusted at removing arbitrary paths
-		unlink (server_addru.sun_path);
+	else
+	{
+		weechat_printf (NULL,
+						_("%s%s: invalid bind path \"%s\""),
+						weechat_prefix ("error"), RELAY_PLUGIN_NAME,
+						bind_path);
+		return 0;
+	}
+	// TODO: part of me feels disgusted at removing arbitrary paths
+	unlink (server_addru.sun_path);
 
         ptr_addr = &server_addru;
         addr_size = sizeof (struct sockaddr_un);
